@@ -6,13 +6,11 @@ from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
 from django.utils.timezone import make_aware
-from django.utils.translation import ugettext_lazy as _
 from intercom import IntercomError, MultipleMatchingUsersError
 from intercom.client import Client
 
 from aa_intercom.celery import app
-from aa_intercom.exceptions import UnsupportedIntercomEventType
-from aa_intercom.utils import get_intercom_event_model, upload_intercom_user, upload_not_registered_user_data
+from aa_intercom.utils import upload_intercom_user, upload_not_registered_user_data
 
 intercom = Client(personal_access_token=settings.INTERCOM_API_ACCESS_TOKEN)
 
@@ -48,16 +46,13 @@ def push_intercom_event_task(obj_id):
     release_lock = lambda: cache.delete(lock_id)  # noqa: E731
 
     if acquire_lock():
-        IntercomEvent = get_intercom_event_model()
+        from aa_intercom.models import IntercomEvent
         try:
             instance = IntercomEvent.objects.get(pk=obj_id)
             if instance.is_sent:
                 return
-            try:
-                data = instance.get_intercom_data()
-            except UnsupportedIntercomEventType:
-                release_lock()
-                raise UnsupportedIntercomEventType(_("There is no action for this event type: ") + instance.type)
+
+            data = instance.get_intercom_data()
             try:
                 if instance.user:
                     upload_intercom_user(instance.user.pk)

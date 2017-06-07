@@ -1,5 +1,7 @@
 import os
 
+from django.utils.translation import ugettext_lazy as _
+
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SECRET_KEY = "ya+&ticzgynvm*y10*f2ldz(v7yoa1!-$=j3!9dk*73hjp@+^k"
 DEBUG = True
@@ -52,7 +54,11 @@ TEST_RUNNER = "django.test.runner.DiscoverRunner"
 SKIP_INTERCOM = True
 INTERCOM_ID_PREFIX = ""
 INTERCOM_API_ACCESS_TOKEN = "foo"
-INTERCOM_EVENT_MODEL = "test_project.IntercomEvent"
+INTERCOM_EVENT_TYPES = (
+    ("example type", _("Example Type")),
+    ("generic type", _("Generic Type"))
+)
+
 
 ENV_PREFIX = "demo-local"
 
