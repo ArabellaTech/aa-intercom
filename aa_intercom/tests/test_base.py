@@ -9,11 +9,12 @@ from django.test.utils import override_settings
 from freezegun import freeze_time
 from intercom.errors import IntercomError
 
-from aa_intercom.models import IntercomEvent
+from aa_intercom.exceptions import UnsupportedIntercomEventType
 from aa_intercom.tasks import push_account_last_seen_task, push_not_registered_user_data_task
 from aa_intercom.tests.test_utils import BaseTestCase
+from aa_intercom.utils import get_intercom_event_model
 
-EVENT_TYPE_EXAMPLE = "example"
+IntercomEvent = get_intercom_event_model()
 
 
 class TestIntercomAPI(BaseTestCase):
@@ -87,6 +88,9 @@ class TestIntercomAPI(BaseTestCase):
             })
 
     def test_intercom_example_event(self):
+        """
+            this test can be removed or fine tuned per project.
+        """
         self._create_user()
         mail.outbox = []
         self.assertEqual(IntercomEvent.objects.count(), 0)
@@ -98,13 +102,16 @@ class TestIntercomAPI(BaseTestCase):
                 endpoints.register_uri("POST", url_events)
                 endpoints.register_uri("POST", url_users)
 
-                ie = IntercomEvent.objects.create(user=self.user, type=EVENT_TYPE_EXAMPLE, metadata={"abc": 1})
+                ie = IntercomEvent.objects.create(
+                    user=self.user,
+                    type=IntercomEvent.TYPE_EXAMPLE_EVENT,
+                )
                 self.assertFalse(ie.is_sent)
                 ie.refresh_from_db()
                 events = IntercomEvent.objects.all()
 
                 for e in events:
-                    self.assertEqual(e.type, EVENT_TYPE_EXAMPLE)
+                    self.assertEqual(e.type, IntercomEvent.TYPE_EXAMPLE_EVENT)
 
                 self.assertTrue(ie.is_sent)
 
@@ -113,11 +120,18 @@ class TestIntercomAPI(BaseTestCase):
                 ie.save()
                 self.assertEqual(last_api_response, self.user.intercom_last_api_response)
 
+        # Test uploading an unsupported event
+        with self.assertRaises(UnsupportedIntercomEventType):
+            IntercomEvent.objects.create(type="unsupported")
+
         # Test handling Intercom API errors
         with mock.patch("aa_intercom.tasks.upload_intercom_user") as mocked_upload:
             mocked_upload.side_effect = IntercomError("Unknown Error")
             with self.assertRaises(IntercomError):
-                ie = IntercomEvent.objects.create(user=self.user, type=EVENT_TYPE_EXAMPLE)
+                ie = IntercomEvent.objects.create(
+                    user=self.user,
+                    type=IntercomEvent.TYPE_EXAMPLE_EVENT
+                )
                 ie.refresh_from_db()
                 self.assertFalse(ie.is_sent)
 
