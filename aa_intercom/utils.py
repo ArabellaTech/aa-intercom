@@ -2,25 +2,13 @@
 from datetime import datetime
 
 import pytz
-from django.apps import apps
 from django.conf import settings
 from django.contrib.auth import get_user_model
-from django.core.exceptions import ImproperlyConfigured
 from django.utils.timezone import make_aware, now
-from django.utils.translation import ugettext_lazy as _
 from intercom import errors
 from intercom.client import Client
 
 intercom = Client(personal_access_token=settings.INTERCOM_API_ACCESS_TOKEN)
-
-
-def get_intercom_event_model():
-    try:
-        app_label, model_name = getattr(settings, "INTERCOM_EVENT_MODEL", "").split(".", 1)
-    except AttributeError:
-        raise ImproperlyConfigured(_("INTERCOM_EVENT_MODEL must be provided in settings"))
-
-    return apps.get_model(app_label, model_name)
 
 
 def upload_intercom_user(obj_id):

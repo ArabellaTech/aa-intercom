@@ -7,14 +7,27 @@ import requests_mock
 from django.core import mail
 from django.test.utils import override_settings
 from freezegun import freeze_time
-from intercom.errors import IntercomError
+from intercom.errors import IntercomError, MultipleMatchingUsersError, ServiceUnavailableError
+from test_project.models import UserModel
 
-from aa_intercom.exceptions import UnsupportedIntercomEventType
-from aa_intercom.tasks import push_account_last_seen_task, push_not_registered_user_data_task
+from aa_intercom.models import IntercomEvent
+from aa_intercom.tasks import (push_account_last_seen_task, push_account_task, push_intercom_event_task,
+                               push_not_registered_user_data_task)
 from aa_intercom.tests.test_utils import BaseTestCase
-from aa_intercom.utils import get_intercom_event_model
+from aa_intercom.utils import upload_not_registered_user_data
 
-IntercomEvent = get_intercom_event_model()
+EVENT_TYPE_EXAMPLE = "example"
+
+
+class FakeIntercomUserService(object):
+    def create(self, *args, **kwargs):
+        raise ServiceUnavailableError
+
+
+class FakeIntercom(object):
+    @property
+    def users(self):
+        return FakeIntercomUserService()
 
 
 class TestIntercomAPI(BaseTestCase):
@@ -68,6 +81,15 @@ class TestIntercomAPI(BaseTestCase):
             self.user.refresh_from_db()
             self.assertIsNotNone(self.user.intercom_last_api_response)
 
+            # test case in which user does not exist (was removed in the meantime)
+            user_id = 8282
+            with self.assertRaises(UserModel.DoesNotExist):
+                UserModel.objects.get(pk=user_id)
+
+            with mock.patch("aa_intercom.tasks.cache.delete") as mocked_delete:
+                push_account_task.apply_async(args=[user_id])
+                mocked_delete.assert_called()
+
     @freeze_time("2017-01-01")
     @override_settings(SKIP_INTERCOM=False)
     def test_not_registered_user_data_upload(self):
@@ -87,10 +109,31 @@ class TestIntercomAPI(BaseTestCase):
                 }
             })
 
+        # assure push_account task does not fail in case of ServiceUnavailableError
+        with mock.patch("aa_intercom.utils.intercom", FakeIntercom()):
+            self._create_user()
+            last_api_response_timestamp = self.user.intercom_api_response_timestamp
+            self.user.refresh_from_db()
+            self.assertEqual(self.user.intercom_api_response_timestamp, last_api_response_timestamp)
+
+        # make sure cache is deleted in case of an error
+        with mock.patch("aa_intercom.tasks.upload_not_registered_user_data", side_effect=MultipleMatchingUsersError()):
+            with mock.patch("aa_intercom.tasks.cache.delete") as mocked_delete:
+                with self.assertRaises(MultipleMatchingUsersError):
+                    push_not_registered_user_data_task.apply_async(args=[{
+                        "email": "foo@bar.bar"
+                    }])
+                    mocked_delete.assert_called()
+
+        # test sending data other than a dictionary
+        with self.assertRaises(NotImplementedError):
+            upload_not_registered_user_data(object())
+
+        # test sending data without the "email" keyword
+        with self.assertRaises(KeyError):
+            upload_not_registered_user_data({"name": "n"})
+
     def test_intercom_example_event(self):
-        """
-            this test can be removed or fine tuned per project.
-        """
         self._create_user()
         mail.outbox = []
         self.assertEqual(IntercomEvent.objects.count(), 0)
@@ -102,16 +145,13 @@ class TestIntercomAPI(BaseTestCase):
                 endpoints.register_uri("POST", url_events)
                 endpoints.register_uri("POST", url_users)
 
-                ie = IntercomEvent.objects.create(
-                    user=self.user,
-                    type=IntercomEvent.TYPE_EXAMPLE_EVENT,
-                )
+                ie = IntercomEvent.objects.create(user=self.user, type=EVENT_TYPE_EXAMPLE, metadata={"abc": 1})
                 self.assertFalse(ie.is_sent)
                 ie.refresh_from_db()
                 events = IntercomEvent.objects.all()
 
                 for e in events:
-                    self.assertEqual(e.type, IntercomEvent.TYPE_EXAMPLE_EVENT)
+                    self.assertEqual(e.type, EVENT_TYPE_EXAMPLE)
 
                 self.assertTrue(ie.is_sent)
 
@@ -120,20 +160,30 @@ class TestIntercomAPI(BaseTestCase):
                 ie.save()
                 self.assertEqual(last_api_response, self.user.intercom_last_api_response)
 
-        # Test uploading an unsupported event
-        with self.assertRaises(UnsupportedIntercomEventType):
-            IntercomEvent.objects.create(type="unsupported")
+        # test sending event w/o user
+        with mock.patch("aa_intercom.tasks.upload_not_registered_user_data") as mocked_upload:
+            metadata = {"email": "foo@bar.foo"}
+            IntercomEvent.objects.create(type=EVENT_TYPE_EXAMPLE, metadata=metadata)
+            mocked_upload.assert_called_with(metadata)
 
-        # Test handling Intercom API errors
+        # test handling Intercom API errors
         with mock.patch("aa_intercom.tasks.upload_intercom_user") as mocked_upload:
             mocked_upload.side_effect = IntercomError("Unknown Error")
             with self.assertRaises(IntercomError):
-                ie = IntercomEvent.objects.create(
-                    user=self.user,
-                    type=IntercomEvent.TYPE_EXAMPLE_EVENT
-                )
+                ie = IntercomEvent.objects.create(user=self.user, type=EVENT_TYPE_EXAMPLE)
                 ie.refresh_from_db()
                 self.assertFalse(ie.is_sent)
+
+        # test case in which event was removed in meantime (before the task ran)
+        # make sure the cache is deleted
+        event_id = 8282
+        with self.assertRaises(IntercomEvent.DoesNotExist):
+            IntercomEvent.objects.get(pk=event_id)
+        with mock.patch("aa_intercom.tasks.upload_not_registered_user_data", side_effect=IntercomEvent.DoesNotExist()):
+            with mock.patch("aa_intercom.tasks.cache.delete") as mocked_delete:
+                with self.assertRaises(IntercomEvent.DoesNotExist):
+                    push_intercom_event_task(event_id)
+                    mocked_delete.assert_called()
 
     def test_intercom_user_last_seen(self):
         self._create_user()

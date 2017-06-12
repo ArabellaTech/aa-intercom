@@ -2,10 +2,8 @@
 
 from django.core.management.base import BaseCommand
 
+from aa_intercom.models import IntercomEvent
 from aa_intercom.tasks import push_intercom_event_task
-from aa_intercom.utils import get_intercom_event_model
-
-IntercomEvent = get_intercom_event_model()
 
 
 class Command(BaseCommand):

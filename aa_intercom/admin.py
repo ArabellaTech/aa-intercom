@@ -1,7 +1,6 @@
-# -*- coding: utf-8 -*-
-"""Sample admin configuration for IntercomEvent"""
 from django.contrib import admin
-from test_project.models import IntercomEvent
+
+from aa_intercom.models import IntercomEvent
 
 
 class IntercomEventAdmin(admin.ModelAdmin):

@@ -2,11 +2,9 @@ import mock
 from django.core.management import call_command
 from django.db.models.signals import post_save
 
+from aa_intercom.models import IntercomEvent
 from aa_intercom.signals import intercom_event_push_to_intercom_post_save
 from aa_intercom.tests.test_utils import BaseTestCase
-from aa_intercom.utils import get_intercom_event_model
-
-IntercomEvent = get_intercom_event_model()
 
 
 class TestCommands(BaseTestCase):
@@ -15,9 +13,10 @@ class TestCommands(BaseTestCase):
         self.users = [self._new_user(i) for i in range(self.user_count)]
 
     def test_resend_intercom_events(self):
-        # Disable post_save signal during the test
+        # Disable post_save signal during the test to simulate that the events were not sent and the
+        # resend_intercom_event command should be used
         post_save.disconnect(intercom_event_push_to_intercom_post_save, sender=IntercomEvent)
-        intercom_events = [IntercomEvent.objects.create(user=self.users[i], type=IntercomEvent.TYPE_GENERIC)
+        intercom_events = [IntercomEvent.objects.create(user=self.users[i], type="generic")
                            for i in range(self.user_count)]
         for e in intercom_events:
             self.assertFalse(e.is_sent)
