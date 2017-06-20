@@ -1,0 +1,8 @@
+# Change Log
+All notable changes to this project will be documented in this file.
+
+## [1.0.1]
+### Added
+- IntercomEvent model
+- resend_intercom_events command
+- push_not_registered_user_data_task
